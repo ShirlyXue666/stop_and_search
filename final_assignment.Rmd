@@ -1,0 +1,480 @@
+---
+title: "Final Assignment - A Research Project on UK Police's Stop and Search"
+output: html_document
+date: "2023-12-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+options(message = FALSE) 
+options(warning = FALSE)
+```
+
+
+## I. Introduction
+
+My research question is about if there are biases in who experiences stop and search by the UK Police, and I approached this question mainly by evaluating the gender, ethnicity, and age distribution among those who experienced stop and search. I also observed the ratio of whether outcome was linked to the initial reason for conducting the search. Finally, I analyzed the geographical differences and time trends for stop and search in the UK to understand potential biases from spatial and temporal factors. Link to my public Github repo to this project: https://github.com/ShirlyXue666/stop_and_search.git.
+
+## II. Data
+
+I utilized multiple data sources. First, I used the monthly stop and search data from UK police for the most recent year (Oct. 2022 to Oct. 2023) to analyze the gender, ethnicity, and age factors cross-sectionally. To obtain the total number of populations for different gender, ethnicity, and age, I also referenced and obtained relevant data from the UK Office for National Statistics. I then divided the stop and search count by those features by the number of UK population by these features to obtain the Ratio parameter. I also utilized the information on whether an outcome is linked to object of search and created the Link Ratio parameter to reflect the proportion of stop and search with linked outcome. After the cross-sectional analysis by gender, ethnicity, and age, I obtained the KML files from UK Police Data to draw the map and then web scraped the population by county data from the “Counties in England by population” Wikipedia page to obtain the stop and search count by county over county population data. I also plotted a time series of stop and search along with unemployment rate data from the UK Office for National Statistics.
+
+```{r, message=FALSE}
+library(dplyr,quietly = TRUE) # Import relevant libraries.
+library(readr,quietly = TRUE)
+library(ggplot2, quietly = TRUE) # Import the ggplot2 library.
+library(tidyverse,quietly = TRUE) 
+library(ggpubr)
+library(reshape2)
+```
+
+```{r Import files,message=FALSE, warning=FALSE}
+years <- c("2022-11", "2022-12", "2023-01", "2023-02", "2023-03", "2023-04", "2023-05", "2023-06", "2023-07", "2023-08", "2023-09", "2023-10") # Specify the years of data that will be included for analysis.
+all_data <- data.frame() # Create an empty data frame to store imported data.
+for (i in years){ # Iterate through each year.
+  df_i <- # Define a data frame for each year's data.
+  suppressMessages(list.files(path = paste0("one_year_all_forces/", i),
+                 pattern = "*.csv", full.names = TRUE) %>%
+       lapply(read_csv) %>%
+       bind_rows)
+  all_data <- bind_rows(all_data, df_i) # Combine all the individual data frames from each year.
+}
+```
+
+## III. Analysis
+### 0. Type of Search
+```{r Type of Search}
+all_data_vehicle1 <- all_data %>% rename("outcome"= "Outcome linked to object of search") # Group the stop and search data by gender and rename the column a Gender.
+all_data_vehicle <- all_data_vehicle1 %>% group_by(Type) %>% summarise(Count = n(), Link = sum(outcome == TRUE, na.rm = TRUE), Link_by_Count = Link/Count)
+print(all_data_vehicle) # Show the type of search distribution table.
+```
+
+I summarized the “type of search” factor and found Person search the most frequent type, followed by Person and Vehicle search and then Vehicle search, which reflects that different human characteristics likely play a big role in who experiences stop and search. 
+
+### 1. Gender Analysis
+```{r Gender Analysis, warning=FALSE}
+all_data_gender1 <- all_data %>% rename("outcome"= "Outcome linked to object of search") # Group the stop and search data by gender and rename the column a Gender.
+all_data_gender <- all_data_gender1 %>% group_by(Gender) %>% summarise(Count = n(), Link = sum(outcome == TRUE, na.rm = TRUE), Link_Ratio = mean(outcome == TRUE, na.rm = TRUE)) %>% mutate(Ratio = c((46479/30420100), (356162/29177200), NA, NA)) # Obtain the total population by gender statistics and calculate the gender distribution.
+print(all_data_gender) # Show the gender distribution table.
+
+# Count plot
+all_data_gender_c <- all_data_gender %>% select(c("Gender", "Count", "Link"))
+all_data_gender_c_w <- melt(all_data_gender_c, id='Gender')
+plot_gender_c_w <- ggplot(
+  data = all_data_gender_c_w, 
+  mapping = aes(x = Gender, y = value, fill = variable) # View the plot by gender.
+  ) + geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Gender", y = "Count", fill = "Color") + 
+  theme_minimal()
+
+# Proportion plot
+all_data_gender_p <- all_data_gender %>% select(c("Gender", "Ratio", "Link_Ratio"))
+all_data_gender_p <- all_data_gender_p %>% mutate(link_ratio = all_data_gender_p$Link_Ratio * all_data_gender_p$Ratio) %>% select(-Link_Ratio) %>% rename("Link Ratio" = "link_ratio") # Create a Ratio column.
+all_data_gender_p_w <- melt(all_data_gender_p, id='Gender') 
+
+# Create a bar plot for gender distribution
+plot_gender_p_w <- ggplot(
+  data = all_data_gender_p_w, 
+  mapping = aes(x = Gender, y = value, fill = variable) # View the plot by gender.
+  ) + geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Gender", y = "Proportion", fill = "Color") + 
+  theme_minimal()
+
+# Put the two General plots in one frame
+combined_plot_gender <- ggarrange(plot_gender_c_w, plot_gender_p_w, common.legend = FALSE, legend = "bottom", ncol = 2)
+combined_plot_gender
+```
+
+The graph above shows that males are more likely to experience stop and search than women, and that men experienced 7 times more than women by count and 8 times more by proportion.
+
+### 2. Ethnicity 
+#### 2.1 Self-defined Ethnicity
+```{r Self-defined Ethnicity,message=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+ppl_by_ethnicity <- read.csv("by-ethnicity-table.csv") # Obtain another data of total population by ethnicity from UK government statistics website.
+all_data_ethnicity <- all_data %>% rename("Ethnicity" = "Self-defined ethnicity", "outcome"= "Outcome linked to object of search")
+all_data_ethnicity <- all_data_ethnicity %>% group_by(Ethnicity) %>% summarise(Count = n(),Link = sum(outcome == TRUE, na.rm = TRUE), Link_ratio = mean(outcome == TRUE, na.rm = TRUE)) # Group the stop and search data by ethnicity.
+
+merged_tot_ppl <- merge(ppl_by_ethnicity, all_data_ethnicity, by = "Ethnicity") # Merge the two tables.
+merged_tot_ppl$Total_Population <- as.numeric(gsub(",", "", merged_tot_ppl$Total_Population)) # Remove the comma in total population column and make it numeric.
+merged_tot_ppl$Ratio <- merged_tot_ppl$Count / merged_tot_ppl$Total_Population # Create a column of a stop and search ratio by ethnicity.
+merged_tot_ppl$link_ratio <- merged_tot_ppl$Link_ratio * merged_tot_ppl$Ratio
+merged_tot_ppl_present <- merged_tot_ppl %>% select(-c(Link_ratio)) %>% rename("Percentage in Total Population" = "perct_total_ppl", "Total Population" = "Total_Population", "Stop and Search Count" = "Count", "Link Count" = "Link", "Link Proportion" = "link_ratio", "Population Ratio" = "Ratio")
+print(merged_tot_ppl_present) # Show the ethnicity distribution and statistics table.
+
+merged_tot_ppl <- mutate(merged_tot_ppl, Umbrella = str_sub(merged_tot_ppl$Ethnicity, start = 1, end = 5)) # Create a new column classifying each ethnic group into their umbrella group
+merged_tot_ppl_um <- merged_tot_ppl %>% group_by(Umbrella) %>% summarise(Sum_count = sum(Count), Sum_link = sum(Link), mean_Ratio = mean(Ratio), mean_Link_ratio = mean(link_ratio))
+
+# General - count plot
+merged_tot_ppl_um_count <- select(merged_tot_ppl_um, c("Umbrella", "Sum_count", "Sum_link")) %>% rename("Stop and Search" = "Sum_count", "Outcome Linked to Search" = "Sum_link")
+merged_tot_ppl_um_count_wide <- melt(merged_tot_ppl_um_count, id='Umbrella') # Reframe the data for visualization.
+
+plot_ethnicity_general_cnt <- ggplot() + # Create a bar plot for ethnicity distribution. 
+  geom_bar(data = merged_tot_ppl_um_count_wide, 
+  mapping = aes(x = value, y = Umbrella, fill = variable), stat = "identity", position = "dodge") +
+  labs(x = "Count", y = "Ethnicity (Self-defined)", fill = "Type of Count/Proportion") + # Add labels.
+  theme_minimal() 
+
+# General - ratio plot
+merged_tot_ppl_um_ratio <- select(merged_tot_ppl_um, c("Umbrella", "mean_Ratio", "mean_Link_ratio")) %>% rename("Stop and Search" = "mean_Ratio", "Outcome Linked to Search" = "mean_Link_ratio")
+merged_tot_ppl_um_ratio_wide <- melt(merged_tot_ppl_um_ratio, id='Umbrella')
+
+plot_ethnicity_general_prop <- ggplot() + # Create a bar plot for ethnicity distribution. 
+  geom_bar(data = merged_tot_ppl_um_ratio_wide, 
+  mapping = aes(x = value, y = Umbrella, fill = variable), stat = "identity", position = "dodge") +
+  labs(x = "Proportion", y = "Ethnicity (Self-defined)", fill = "Type of Proportion/Proportion") + 
+  theme_minimal() 
+# Put the two General plots in one frame
+combined_general_plot <- ggarrange(plot_ethnicity_general_cnt, plot_ethnicity_general_prop, common.legend = TRUE, legend = "bottom", ncol = 2) # Make the two plots into one frame for easier comparisons.
+combined_general_plot
+
+# Make plot of the stop and search distribution for specific ethnicity (Count)
+merged_tot_ppl_faceted <- merged_tot_ppl %>% mutate(name = gsub(".*- ", "", merged_tot_ppl$Ethnicity)) %>% select(-c( perct_total_ppl, Total_Population, Link_ratio)) # Clean the ethnicity name column.
+merged_tot_ppl_faceted_cnt <- merged_tot_ppl_faceted %>% select(Umbrella, name, Count, Link) %>% rename("Stop and Search" = "Count", "Outcome Linked to Search" = "Link") # Select the columns that will be used and rename the variables to more interpretable ones.
+merged_tot_ppl_faceted_cnt_w <- melt(merged_tot_ppl_faceted_cnt, id=c('name', 'Umbrella')) # Reframe the table to make it ready for bar plotting of two variables for each feature/category.
+
+plot_tot_ppl_faceted_cnt_w <- ggplot() + # Create a bar plot for ethnicity distribution. 
+  geom_bar(data = merged_tot_ppl_faceted_cnt_w, 
+  mapping = aes(x = value, y = factor(name, levels = unique(name)), fill = variable), stat = "identity", position = "dodge") +
+  labs(x = "Count", y = "Ethnicity", fill = "Type of Count")
+  #facet_wrap(vars(Umbrella)) +
+  theme_minimal() 
+plot_tot_ppl_faceted_cnt_w
+
+# Make plot of the stop and search distribution for specific ethnicity (Proportion)
+merged_tot_ppl_faceted_prop <- merged_tot_ppl_faceted %>% select(Umbrella, name, Ratio, link_ratio) %>% rename("Stop and Search" = "Ratio", "Outcome Linked to Search" = "link_ratio")
+merged_tot_ppl_faceted_prop_w <- melt(merged_tot_ppl_faceted_prop, id=c('name', 'Umbrella'))
+
+plot_ethnicity_prop_f <- ggplot(data = merged_tot_ppl_faceted_prop_w, mapping = aes(x = value, y = factor(name, levels = unique(name)), fill = variable)) + # Create a bar plot for ethnicity distribution. 
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Proportion", y = "Ethnicity", fill = "Type of Proportion") + 
+  #facet_wrap(vars(Umbrella)) +
+  theme_minimal() 
+
+```
+
+```{r}
+merged_tot_ppl_present
+combined_general_plot
+plot_tot_ppl_faceted_cnt_w
+plot_ethnicity_prop_f
+```
+
+
+#### 2.2 Officer-defined Ethnicity
+
+```{r Officer-defined Ethnicity}
+ppl_by_ethnicity_O <- read.csv("by-ethnicity-table_Officer.csv") # Obtain another data of total population by ethnicity from UK government statistics website.
+all_data_ethnicity_o <- all_data %>% rename("Ethnicity" = "Officer-defined ethnicity", "outcome"= "Outcome linked to object of search")
+all_data_ethnicity_o <- all_data_ethnicity_o %>% group_by(Ethnicity) %>% summarise(Count = n(),Link = sum(outcome == TRUE, na.rm = TRUE), Link_ratio = mean(outcome == TRUE, na.rm = TRUE)) # Group the stop and search data by ethnicity.
+merged_tot_ppl_o <- merge(ppl_by_ethnicity_O, all_data_ethnicity_o, by = "Ethnicity") # Merge the two tables.
+merged_tot_ppl_o$Total_Population <- as.numeric(gsub(",", "", merged_tot_ppl_o$Total_Population)) # Remove the comma in total population column and make it numeric.
+merged_tot_ppl_o$Ratio <- merged_tot_ppl_o$Count / merged_tot_ppl_o$Total_Population # Create a column of a stop and search ratio by ethnicity.
+merged_tot_ppl_o$link_ratio <- merged_tot_ppl_o$Link_ratio * merged_tot_ppl_o$Ratio
+merged_tot_ppl_present_o <- merged_tot_ppl_o %>% select(-c(Link_ratio)) %>% rename("Percentage in Total Population" = "perct_total_ppl", "Total Population" = "Total_Population", "Stop and Search Count" = "Count", "Link Count" = "Link", "Link Proportion" = "link_ratio", "Population Ratio" = "Ratio")
+print(merged_tot_ppl_present_o) # Show the ethnicity distribution and statistics table.
+
+# General - count plot
+merged_tot_ppl_o_p <- select(merged_tot_ppl_o, c("Ethnicity","Count", "Link")) %>% rename("Stop and Search" = "Count", "Outcome Linked to Search" = "Link")
+merged_tot_ppl_o_p_wide <- melt(merged_tot_ppl_o_p, id='Ethnicity')
+
+plot_ethnicity_general_cnt_o <- ggplot() + # Create a bar plot for ethnicity distribution. 
+  geom_bar(data = merged_tot_ppl_o_p_wide, 
+  mapping = aes(x = value, y = Ethnicity, fill = variable), stat = "identity", position = "dodge") +
+  labs(x = "Count", y = "Ethnicity (Officer-defined)", fill = "Type of Count/Proportion") + 
+  theme_minimal() 
+
+# General - ratio plot
+merged_tot_ppl_o_ratio <- select(merged_tot_ppl_o, c("Ethnicity","Ratio", "link_ratio")) %>% rename("Stop and Search" = "Ratio", "Outcome Linked to Search" = "link_ratio")
+merged_tot_ppl_o_ratio_wide <- melt(merged_tot_ppl_o_ratio, id='Ethnicity')
+
+plot_ethnicity_general_prop_o <- ggplot() + # Create a bar plot for ethnicity distribution. 
+  geom_bar(data = merged_tot_ppl_o_ratio_wide, 
+  mapping = aes(x = value, y = Ethnicity, fill = variable), stat = "identity", position = "dodge") +
+  labs(x = "Proportion", y = "Ethnicity (Officer-defined)", fill = "Type of Count/Proportion") + 
+  theme_minimal() 
+
+# Put the two General plots in one frame
+combined_general_plot_O <- ggarrange(plot_ethnicity_general_cnt_o, plot_ethnicity_general_prop_o, common.legend = TRUE, legend = "bottom", ncol = 2) # Make the two plots into one frame for easier comparisons.
+combined_general_plot_O
+```
+
+For ethnicity analysis, I conducted the analysis for both self-defined and officer-defined ethnicity. For the major 5 ethnic categories (after grouping by the specific categories for a more general understanding first), I found that for raw counts, White dominates as this is the dominant ethnic group (82% of total UK Population); however, when looking at proportions, I observed that Black, especially Black Caribbean, dominates, and the link ratio for White (0.4899886) is also higher than for Black (0.4343643), which implies that stop and search may be biased against Black and Mixed people (as no link means that the search is not linked, or related, to the outcome of the search). This trend persists for officer-defined ethnicity.
+
+### 3. Age
+
+```{r Age}
+library(readxl, quietly=TRUE)
+library(reshape2, quietly=TRUE)
+all_data_age <- all_data %>% group_by(all_data$"Age range") %>% summarise(Count = n()) %>% rename("Age" = "all_data$\"Age range\"")
+
+all_data_age1 <- all_data %>% rename("Age" = "Age range", "outcome"= "Outcome linked to object of search") %>% group_by(Age) %>% summarise(Count = n(), Link = sum(outcome == TRUE, na.rm = TRUE), Link_ratio = mean(outcome == TRUE, na.rm = TRUE))
+
+age_ppl <- read_excel("edited_age_ppl.xlsx") # Read in the excel file (for replicating purpose, please change to your local directory to this file).
+merged_age <- merge(all_data_age1, age_ppl, by = "Age")
+merged_age$Ratio <- merged_age$Count/merged_age$Total_ppl_count
+merged_age_count_link <- select(merged_age, "Age", "Count", "Link") %>% rename("Stop and Search" = "Count", "Outcome Linked to Search" = "Link")
+merged_age_count_link_wide <- melt(merged_age_count_link, id='Age')
+
+# Create a bar plot showing distribution of age (Count).
+plot_age <- ggplot(data = merged_age_count_link_wide, mapping = aes(x = Age, y = value, fill = variable)) + geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Age", y = "Count", fill = "Type of Count/Proportion") + 
+  theme_minimal()
+
+# Create a bar plot showing distribution of age (Proportion).
+merged_age_count_link2 <- select(merged_age, "Age", "Ratio", "Link_ratio")
+merged_age_count_link2$link_ratio <- merged_age_count_link2$Link_ratio * merged_age_count_link2$Ratio
+merged_age_count_link3 <- select(merged_age_count_link2, -Link_ratio) %>% rename("Stop and Search" = "Ratio", "Outcome Linked to Search" = "link_ratio")
+merged_age_count_link_wide3 <- melt(merged_age_count_link3, id='Age')
+
+plot_age3 <- ggplot()+
+  geom_bar(merged_age_count_link_wide3, stat = "identity", mapping = aes(x = Age, y = value, fill = variable), position = "dodge") +
+  labs(x = "Age", y = "Proportion", fill = "Type of Count/Proportion") +
+  theme_minimal()
+
+combined_age <- merge(merged_age_count_link3, merged_age_count_link, by = "Age") %>% rename ("Stop and search proportion" = "Stop and Search.x", "Proportion of search linked to outcome" = "Outcome Linked to Search.x", "Stop and search count" = "Stop and Search.y", "Count of search linked to outcome" = "Outcome Linked to Search.y")
+print(combined_age) # Present the combined table.
+combined_plot_age <- ggarrange(plot_age, plot_age3, common.legend = TRUE, legend = "bottom", ncol = 2) # Make the two plots into one frame for easier comparisons.
+combined_plot_age
+```
+
+For raw counts of age analysis, all age groups have similar level of stop and search (except those under 10), but for proportions, 18-24 stands out with almost two times more than the neighboring age groups (10-17 and 25-34). The proportion of linked outcome for teenagers between 10-17 (0.4316162) is much lower than that for young adults between 18-24 (0.5318321) and adults between 24-34 (0.5085524), which reflects there may be bias against teenagers.
+
+### 4. Map of geographical distribution
+```{r, message=FALSE, include=FALSE}
+library(stringr) # Import relevant libraries.
+library(sf)
+library(leaflet)
+```
+
+```{r Geographical Analysis, message=FALSE, warning = FALSE, error = FALSE, include=FALSE}
+ods <- read_csv("ods/stop-search-open-data-tables-mar21-mar23 (1).csv") # Import a combined data set from 2020 to 2023 (for replicating purpose, please change to your local directory to this file).
+
+kml_files <- list.files(path = "force_kmls", full.names = TRUE) # Import KML files of each force (for replicating purpose, please change to your local directory to this file).
+
+all_kml_data <- lapply(kml_files, st_read) %>% 
+  bind_rows() # Read all KML files and combine them into one sf object.
+
+all_kml_data <- all_kml_data %>% mutate(file_name = tools::file_path_sans_ext(basename(kml_files))) # Create a new column showing the name of the force each kml file represents.
+
+# Make the force names of all_kml_data same as that of ods.
+all_kml_data$file_name1 <- str_replace_all(all_kml_data$file_name, "-and-", " & ")
+all_kml_data$file_name1 <- str_replace_all(all_kml_data$file_name1, "-", " ")
+all_kml_data$file_name1 <- gsub("\\b([a-z])", "\\U\\1", all_kml_data$file_name1, perl = TRUE)
+all_kml_data$file_name1[5] <- "London, City of"
+all_kml_data$file_name1[12] <- "Dyfed-Powys"
+all_kml_data$file_name1[25] <- "Metropolitan Police"
+all_kml_data <- all_kml_data %>% rename("police_force_area" = "file_name1")
+
+merged_data1 <- merge(all_kml_data, ods, by = "police_force_area") # Merge the ods and all_kml_data data.
+merged_data2 <- merged_data1 %>% group_by(merged_data1$geometry) %>% summarise(Count = n(), police_force_area = first(police_force_area)) # Group by the data by each force to visualize the geographical difference among difference forces.
+
+# Plot the data to create a map showing counts of stop and search in different UK forces.
+plot_geo_1 <- ggplot() +
+  geom_sf(data = merged_data2, aes(fill = Count)) +
+  theme_minimal() +
+  scale_fill_viridis_c(option = "viridis") +
+  labs(title = "Stop and Search Count Over UK's Different Forces", fill = "Count") 
+  #geom_text(data = merged_data2, aes(label = merged_data2$police_force_area), color = "black", size = 3, check_overlap = TRUE)
+
+```
+
+```{r}
+plot_geo_1
+```
+
+From this graph of raw counts, we can see that London has extremely more stop and search counts than other counties, followed by West Midlands, and then Thames Valley, Essex, Manchester, Merseyside, and West Yorks. 
+
+```{r, message=FALSE, warning = FALSE, error = FALSE, include=FALSE}
+library(rvest)  # Load relevant libraries for webscraping population by UK county data.
+url <- "https://en.wikipedia.org/wiki/Counties_in_England_by_population"
+webpage <- read_html(url)
+tables <- html_table(webpage, fill = TRUE)
+ppl_by_county <- tables[[2]]
+ppl_by_county <- ppl_by_county %>% select(-c(Rank, Region))
+ppl_by_county$"Total population" <- as.numeric(gsub(",", "", ppl_by_county$"Total population")) # Remove the comma in total population column and make it numeric.
+ppl_by_county$County[1] <- "London, City of" # Correct the names to make the tables able to merge by county names.
+ppl_by_county$County[22] <- "Avon & Somerset" 
+ppl_by_county <- ppl_by_county[-c(30, 35), ]
+ppl_by_county$County[23] <- "Thames Valley"
+ppl_by_county$`Total population`[23]<- sum(ppl_by_county$`Total population`[23], ppl_by_county$`Total population`[30],ppl_by_county$`Total population`[35])
+ppl_by_county <- ppl_by_county[-c(30, 35), ]
+ppl_by_county$County[12] <- "Devon & Cornwall"
+ppl_by_county$`Total population`[12]<- sum(ppl_by_county$`Total population`[12], ppl_by_county$`Total population`[38])
+ppl_by_county <- ppl_by_county[-38, ]
+ppl_by_county$`Total population`[21]<- sum(ppl_by_county$`Total population`[21], ppl_by_county$`Total population`[41]) # Adding Rutland to Leicestershire.
+ppl_by_county <- ppl_by_county[-41, ]
+ppl_by_county$County[41] <- "West Mercia" # Summing Herefordshire, Worcestershire, Shropshire to West Mercia
+ppl_by_county$`Total population`[41]<- sum(ppl_by_county$`Total population`[41], ppl_by_county$`Total population`[36], ppl_by_county$`Total population`[39])
+ppl_by_county <- ppl_by_county[-c(36, 39), ]
+ppl_by_county$`Total population`[22]<- sum(ppl_by_county$`Total population`[22], ppl_by_county$`Total  population`[38]) # Adding Bristol to Avon & Somerset.
+ppl_by_county <- ppl_by_county[-38, ]
+ppl_by_county$`Total population`[5]<- sum(ppl_by_county$`Total population`[5], ppl_by_county$`Total  population`[40]) # Adding Isle of Wight to Hampshire.
+ppl_by_county <- ppl_by_county[-40, ]
+ppl_by_county$County[27] <- "Sussex" # Summing East Sussex and West Sussex to Sussex
+ppl_by_county$`Total population`[27]<- sum(ppl_by_county$`Total population`[27], ppl_by_county$`Total population`[29])
+ppl_by_county <- ppl_by_county[-29, ]
+merged_data3 <- merged_data2
+
+merged_data3 <- merged_data3 %>% rename("County" = "police_force_area")
+merged_county <- left_join(merged_data3, ppl_by_county, by = "County")
+merged_county$Count_prop <- merged_county$Count/ merged_county$`Total population`
+merged_county$Count_prop[25] <- merged_county$Count_prop[23]
+county_prop_plot <-ggplot() +
+  geom_sf(data = merged_county, aes(fill = Count_prop)) +
+  theme_minimal() +
+  scale_fill_viridis_c(option = "viridis") +
+  labs(title = "Stop and Search Count Over each County's Population", fill = "Proportion") 
+```
+
+```{r}
+county_prop_plot
+```
+
+When looking at proportions, London (Metropolitan) has much less stop and search than other counties, while Merseyside has the highest proportion of 0.0089739305, followed by Avon & Somerset of 0.0080661241. 
+
+```{r, message=FALSE, warning = FALSE, error = FALSE, include=FALSE}
+merged_data4 <- merged_data1 %>% group_by(merged_data1$geometry) %>% summarise(Link = mean(link == "Linked"), police_force_area = first(police_force_area)) 
+
+county_link_prop_plot <-ggplot() +
+  geom_sf(data = merged_data4, aes(fill = Link)) +
+  theme_minimal() +
+  scale_fill_viridis_c(option = "viridis") +
+  labs(title = "Search Linked to Outcome Ratio for Each County", fill = "Ratio") 
+```
+
+```{r}
+county_link_prop_plot
+```
+
+We can observe that Lancashire and Greater Manchester are where stop and search are much less linked to outcome, which may reflect that there might be more bias in who experience stop and search in these areas.
+
+### 5. Time trend analysis
+
+```{r Data compilation, message=FALSE, warning = FALSE, error = FALSE, include=FALSE}
+two_years <- c("2020-11", "2020-12", "2021-01", "2021-02", "2021-03", "2021-04", "2021-05", "2021-06", "2021-07", "2021-08", "2021-09", "2021-10", "2021-11", "2021-12", "2022-01", "2022-02", "2022-03", "2022-04", "2022-05", "2022-06", "2022-07", "2022-08", "2022-09", "2022-10") # Specify the years of data that will be included for analysis.
+all_data_twoyrs <- data.frame() # Create an empty data frame to store imported data.
+for (i in two_years){ # Iterate through each year.
+  df_i <- # Define a data frame for each year's data.
+  suppressMessages(list.files(path = paste0("other_two_years/", i), # For replicating purpose, please change to your local directory to this file.
+                 pattern = "*.csv", full.names = TRUE) %>%
+       lapply(read_csv) %>%
+       bind_rows)
+  all_data_twoyrs <- bind_rows(all_data_twoyrs, df_i) # Combine all the individual data frames from each year.
+}
+
+all_years <- bind_rows(all_data_twoyrs, all_data) # Combine the three years' data.
+```
+
+```{r 2.2 Analysis and Visualization, message=FALSE, warning = FALSE, error = FALSE, include=FALSE}
+all_data_time <- all_years %>% rename("outcome"= "Outcome linked to object of search") 
+all_data_time <- all_data_time %>% group_by(Date)%>% summarise(Count = n(), Link = sum(outcome == TRUE, na.rm = TRUE))
+
+datetime_posix <- as.POSIXct(all_data_time$Date, format = "%Y-%m-%d %H:%M:%S")
+
+# Extract date and time components
+date_component <- format(datetime_posix, "%Y-%m-%d")
+time_component <- format(datetime_posix, "%H:%M:%S")
+hour_part <- substr(time_component, 1, 2)
+all_data_time <- all_data_time %>% mutate(date_component, time_component,hour_part)
+all_data_time_by_day <- all_data_time %>% group_by(date_component) %>% summarise(Count = sum(Count), Link = sum(Link))
+all_data_time_by_time <- all_data_time %>% group_by(hour_part) %>% summarise(Count = sum(Count), Link = sum(Link))
+
+# Plot long-term time trend distribution (2020-2023)
+all_data_year_long <- pivot_longer(all_data_time_by_day, cols = c(Count, Link), names_to = "Variable", values_to = "Value") # Reform the data.
+all_data_year_long$date_component <- as.Date(all_data_year_long$date_component)
+
+year_trend_plot <- ggplot(all_data_year_long, aes(x = date_component, y = Value, color = Variable)) +
+  geom_step(size = 0.5) +
+  labs(title = "Time Trend Plot for Stop and Search (2020/10-2023/10)",
+       x = "Date",
+       y = "Count",
+       color = "Variable") +
+  theme_minimal() +
+  scale_color_manual(values = c("Count" = "pink", "Link" = "skyblue"),
+                     name = "Type of Count",
+                     labels = c("Stop and Search", "Outcome Linked to Search"))+
+  scale_x_date(date_breaks = "3 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom", legend.box = "horizontal", plot.title = element_text(hjust = 0.5))
+
+# Plot time of a day distribution
+all_data_time_long <- pivot_longer(all_data_time_by_time, cols = c(Count, Link), names_to = "Variable", values_to = "Value") # Reform the data.
+
+time_plot <- ggplot(all_data_time_long, aes(x = hour_part, y = Value, color = Variable)) +
+  geom_point(size = 2) +
+  labs(title = "Stop and Search Count at Different Times of a Day",
+       x = "Time of a Day (Hour)",
+       y = "Count",
+       color = "Variable") +
+  theme_minimal() +
+  scale_color_manual(values = c("Count" = "pink", "Link" = "skyblue"),
+                     name = "Type of Count",
+                     labels = c("Stop and Search", "Outcome Linked to Search")) +
+  theme(legend.position = "bottom", legend.box = "horizontal", plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+suppressWarnings({
+  year_trend_plot
+})
+```
+
+I analyzed the time series from October 2020 to October 2023, and I observed an overall slight downward trend of stop and search count over time, and it seems that there tends to be a sharp drop in winter season (around December) and a slight increase in summertime (with similar trend for link counts).
+
+```{r}
+  time_plot
+```
+
+I also analyzed the frequency of stop and search at different times in a day and observed that nighttime being the most frequent time. This reflects that season and time may also be factors affecting bias in stop and search.
+
+```{r Time trend with Unemployment Rate, message=FALSE, warning = FALSE, error = FALSE, include=FALSE}
+library(zoo)
+# Import unemployment rate data
+Umdata <- read.csv("unemp_rate.csv")
+date_object <- as.Date(paste(Umdata$Date, "01"), format = "%Y %b %d")
+Umdata$Date <- date_object
+Umdata$Date <- sub("-\\d+$", "", Umdata$Date)
+Umdata$Date <- as.yearmon(Umdata$Date, format = "%Y-%m")
+Umdata <- Umdata %>% rename("unemployment" = "percent")
+
+# Proportion data for count
+all_data_time_by_day1 <- all_data_time_by_day
+yr_month <- sub("-\\d+$", "", all_data_time_by_day1$date_component)
+all_data_time_by_day1$Date <- yr_month 
+all_data_time_by_day1 <- select(all_data_time_by_day1, -date_component)
+all_data_time_by_day1 <- all_data_time_by_day1 %>% group_by(Date) %>% summarise(month_sum = sum(Count), link_sum = sum(Link))
+all_data_time_by_day1$month_sum <- all_data_time_by_day1$month_sum/ 10000 # Dividing by 10000 to adjust its scale for better visible comparison with unemployment rate data. 
+all_data_time_by_day1$link_sum <- all_data_time_by_day1$link_sum/ 1000 # Same as above - adjust scale for visualization purpose.
+all_data_time_by_day1$Date <- as.yearmon(all_data_time_by_day1$Date, format = "%Y-%m")
+merged_um <- left_join(all_data_time_by_day1, Umdata,by = join_by(Date))
+merged_um_long <- pivot_longer(merged_um, cols = c(month_sum, link_sum, unemployment), names_to = "Variable", values_to = "Value") # Reshape the data.
+merged_um_long$Date <- as.yearmon(merged_um_long$Date, format = "%Y-%m")
+
+year_trend_plot_um <- ggplot() + # Plotting the combined data.
+  geom_line(merged_um_long, mapping = aes(x = Date, y = Value, color = Variable), size = 0.5) +
+  labs(title = "Time Trend of Stop and Search Count with Unemployment Rate",
+       x = "Date",
+       y = "Value") +
+  theme_minimal() +
+  scale_color_manual(values = c("month_sum" = "pink", "link_sum" = "skyblue", "unemployment" = "lightgreen"),
+                     name = "Value Type",
+                     labels = c("Stop and Search", "Outcome Linked to Search", "Unemployment"))+
+  #scale_x_date(date_breaks = "6 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom", legend.box = "horizontal", plot.title = element_text(hjust = 0.5))
+```
+
+```{r, warning=FALSE}
+suppressWarnings({
+  year_trend_plot_um
+})
+```
+
+I also observed that stop and search count has a similar trend as unemployment rate - when unemployment rate is high, stop and search also tended to be higher. This may imply that people who are unemployed tend to experience more stop and search.
+
+In conclusion, although further analysis controlling for season, time, economic conditions, and geographies may be conducted, I observed that people who are male, Black, and teenagers may be biased to experience more stop and search by the police.
+
+## IV. Appendix: All code in this assignment
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE} 
+# this chunk generates the complete code appendix. 
+# eval=FALSE tells R not to run (``evaluate'') the code here (it was already run before).
+```
